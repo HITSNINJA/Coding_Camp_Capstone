@@ -4,3 +4,5 @@ numpy
 scikit-learn
 tensorflow
 altair
+neurokit2
+PyWavelets

@@ -1,145 +1,252 @@
 import streamlit as st
 import pandas as pd
 import numpy as np
-from tensorflow.keras.models import load_model
-from sklearn.preprocessing import StandardScaler
 import altair as alt
+import joblib
+from tensorflow.keras.models import load_model
 
-st.set_page_config(page_title="Rilexin", layout="wide")
+# Impor fungsi preprocessing dari preprocessing.py
+import preprocessing
 
-# === CSS Styling agar sidebar mirip gambar ===
-st.markdown("""
-    <style>
-    .css-1d391kg {
-        background-color: #3498db !important;
-    }
-    .st-emotion-cache-1d391kg {
-        background-color: #3498db !important;
-    }
-    section[data-testid="stSidebar"] .st-radio > div {
-        flex-direction: column;
-    }
-    .stRadio > label {
-        color: white !important;
-        font-weight: bold;
-    }
-    </style>
-""", unsafe_allow_html=True)
+# ===================================================================
+# PENGATURAN HALAMAN & CACHING
+# ===================================================================
 
-# === Sidebar Navigation ===
-menu = st.sidebar.radio("Navigasi", ["BERANDA", "UPLOAD & PREDIKSI", "KONTAK", "TENTANG"])
+st.set_page_config(page_title="Rilexin - Deteksi Stres", layout="wide", initial_sidebar_state="expanded")
 
-# Fungsi untuk memuat model
+# Fungsi untuk memuat model dan scaler dengan cache agar tidak di-load berulang kali
 @st.cache_resource
 def load_model_keras():
-    return load_model("data/wesad_model.h5")
+    """Memuat model TensorFlow dari file .h5"""
+    try:
+        return load_model("data/wesad_model.h5")
+    except Exception as e:
+        st.error(f"Error memuat model: {e}")
+        return None
 
+@st.cache_resource
+def load_scaler():
+    """Memuat objek StandardScaler dari file .pkl"""
+    try:
+        return joblib.load("data/scaler.pkl")
+    except Exception as e:
+        st.error(f"Error memuat scaler: {e}")
+        return None
+
+# Memuat model dan scaler di awal
 model = load_model_keras()
+scaler = load_scaler()
 
-# === Konten Halaman Berdasarkan Menu ===
-if menu == "BERANDA":
+# Mendapatkan nama fitur yang diharapkan oleh model dari scaler
+if scaler:
+    try:
+        EXPECTED_FEATURES = scaler.feature_names_in_
+    except AttributeError:
+        # Fallback jika scaler tidak memiliki feature_names_in_
+        st.warning("Tidak dapat mengambil nama fitur dari scaler. Pastikan data sesuai.")
+        EXPECTED_FEATURES = None
+else:
+    EXPECTED_FEATURES = None
+
+
+# ===================================================================
+# TAMPILAN HALAMAN
+# ===================================================================
+
+def display_beranda():
+    """Menampilkan konten halaman Beranda."""
     st.image("data/health_img.png", width=120)
-    st.markdown("<h1 style='text-align: center;'>🧠 Rilexin</h1>", unsafe_allow_html=True)
-    st.markdown("""
-    <div style='text-align: center;'>
+    st.markdown("<h1 style='text-align: center; color: #2C3E50;'>🧠 Rilexin</h1>", unsafe_allow_html=True)
+    st.markdown("<p style='text-align: center; font-size: 18px;'>Mendeteksi Stres, Menemukan Ketenangan.</p>", unsafe_allow_html=True)
+    st.markdown("---")
+    col1, col2 = st.columns(2)
+    with col1:
+        st.markdown("### 📌 Fungsi Aplikasi")
+        st.info("""
+        - **Deteksi Otomatis:** Menganalisis data sensor untuk mendeteksi tingkat stres.
+        - **Visualisasi Data:** Menampilkan sinyal sensor mentah dalam grafik interaktif.
+        - **Insight Cepat:** Memberikan ringkasan hasil prediksi yang mudah dipahami.
+        """)
+    with col2:
+        st.markdown("### 📖 Cara Menggunakan")
+        st.warning("""
+        1. **Buka Menu:** Pilih `UPLOAD & PREDIKSI` di sidebar.
+        2. **Unggah File:** Upload file data mentah Anda dalam format `.csv`.
+        3. **Tunggu Proses:** Biarkan aplikasi mengekstrak fitur secara otomatis.
+        4. **Lihat Hasil:** Pilih aksi untuk melihat preview, visualisasi, atau hasil prediksi.
+        """)
 
-    Selamat datang di aplikasi <strong>Stress Detection</strong> berbasis data sensor wearable!<br><br>
-
-    <h3>📌 Fungsi Aplikasi</h3>
-    <p style='text-align: left; display: inline-block;'>
-    - Mendeteksi stres secara otomatis dari data sensor wearable.<br>
-    - Menyediakan visualisasi sinyal sensor.<br>
-    - Memberikan insight dari prediksi tingkat stres.<br>
-    </p>
-
-    <h3>📖 Cara Menggunakan</h3>
-    <p style='text-align: left; display: inline-block;'>
-    1. Pilih menu <strong>Upload & Prediksi</strong> di sidebar.<br>
-    2. Unggah file CSV dari data wearable sensor Anda.<br>
-    3. Pilih fitur seperti visualisasi atau prediksi stres.<br>
-    4. Unduh hasil jika diperlukan.
-    </p>
-
-    </div>
-    """, unsafe_allow_html=True)
-
-elif menu == "UPLOAD & PREDIKSI":
-    st.header("📁 Upload File CSV & Deteksi Stres")
-
-    uploaded_file = st.file_uploader("Upload file CSV dari wearable sensor:", type=["csv"])
+def display_upload_prediksi():
+    """Menampilkan konten halaman Upload & Prediksi dengan alur kerja baru."""
+    st.header("📁 Unggah & Prediksi")
+    
+    uploaded_file = st.file_uploader(
+        "Pilih file CSV data sensor mentah Anda:",
+        type=["csv"],
+        help="Pastikan file CSV memiliki kolom: ACC_x, ACC_y, ACC_z, BVP, TEMP."
+    )
 
     if uploaded_file is not None:
-        df = pd.read_csv(uploaded_file)
-        df = df.dropna(axis=1, how='all')  # Drop kolom kosong
-        st.success("File berhasil diunggah!")
+        if st.session_state.get('file_name') != uploaded_file.name:
+            # Gunakan spinner untuk menandakan proses yang sedang berjalan
+            with st.spinner("Membaca dan memproses file mentah... Ini mungkin memakan waktu beberapa saat."):
+                # 1. Baca file
+                st.session_state.raw_df = pd.read_csv(uploaded_file)
+                st.session_state.raw_df.drop(columns=['Unnamed: 0'], inplace=True, errors='ignore')
+                st.session_state.file_name = uploaded_file.name
+                
+                # 2. Lakukan preprocessing/ekstraksi fitur
+                feature_df = preprocessing.preprocess_subject_data(st.session_state.raw_df)
+                
+                # 3. Simpan hasil atau tampilkan error
+                if feature_df is None or feature_df.empty:
+                    st.error("Gagal memproses file. Pastikan format data benar dan tidak kosong.")
+                    # Bersihkan state jika gagal
+                    for key in list(st.session_state.keys()):
+                        del st.session_state[key]
+                else:
+                    # Simpan data yang berhasil diproses ke session state
+                    st.session_state.feature_df = feature_df
+                    st.success(f"File '{uploaded_file.name}' berhasil diproses! Silakan pilih aksi di bawah.")
 
-        fitur = st.radio("🔧 Pilih fitur yang ingin digunakan:", ["🔍 Preview Data", "📊 Visualisasi Sinyal", "🧠 Prediksi Stres"])
+    # Tampilkan opsi hanya jika data fitur SUDAH SIAP di session_state
+    if 'feature_df' in st.session_state:
+        df_raw = st.session_state.raw_df
+        feature_df = st.session_state.feature_df
+        
+        fitur = st.radio(
+            "🔧 Pilih aksi yang ingin dilakukan:",
+            ["🧠 Hasil Prediksi", "📊 Visualisasi Sinyal", "🔍 Preview Data Mentah", "🔬 Preview Data Fitur"],
+            horizontal=True
+        )
+        st.markdown("---")
 
-        if fitur == "🔍 Preview Data":
-            st.markdown("### 🔍 Preview Data")
-            st.dataframe(df.head())
+        if fitur == "🧠 Hasil Prediksi":
+            st.markdown("#### Hasil Deteksi Stres")
+            # Cek kesiapan model dan scaler sekali lagi
+            if model is None or scaler is None or EXPECTED_FEATURES is None:
+                st.error("Model atau Scaler gagal dimuat. Proses tidak bisa dilanjutkan.")
+            else:
+                with st.spinner("Menyiapkan hasil..."):
+                    # 1. SCALING
+                    X_to_predict = feature_df[EXPECTED_FEATURES]
+                    X_scaled = scaler.transform(X_to_predict)
+                    
+                    # 2. PREDIKSI
+                    predictions_proba = model.predict(X_scaled)
+                    predictions = (predictions_proba > 0.5).astype(int).flatten()
+
+                    # 3. Tampilkan Hasil
+                    display_prediction_results(predictions, feature_df['timestamp'])
 
         elif fitur == "📊 Visualisasi Sinyal":
-            st.markdown("### 📊 Visualisasi Sinyal Sensor")
-            available_columns = df.columns.tolist()
-            selected_sensors = st.multiselect("Pilih sensor untuk visualisasi:", available_columns, default=available_columns[:3])
+            display_signal_visualization(df_raw)
 
-            if 'timestamp' in df.columns:
-                df['timestamp'] = pd.to_datetime(df['timestamp'], errors='coerce')
-                df = df.dropna(subset=['timestamp'])
-                df = df.sort_values('timestamp')
+        elif fitur == "🔍 Preview Data Mentah":
+            st.markdown("#### Tampilan 5 baris pertama data mentah:")
+            st.dataframe(df_raw.head())
+            st.markdown(f"Dimensi data mentah: **{df_raw.shape[0]} baris** x **{df_raw.shape[1]} kolom**")
+            
+        elif fitur == "🔬 Preview Data Fitur":
+            st.markdown("#### Tampilan 5 baris pertama data fitur (setelah preprocessing):")
+            st.dataframe(feature_df.head())
+            st.markdown(f"Dimensi data fitur: **{feature_df.shape[0]} baris** x **{feature_df.shape[1]} kolom**")
 
-                start_time = st.slider("Pilih waktu mulai:", min_value=df['timestamp'].min().to_pydatetime(), max_value=df['timestamp'].max().to_pydatetime(), value=df['timestamp'].min().to_pydatetime())
-                end_time = st.slider("Pilih waktu akhir:", min_value=df['timestamp'].min().to_pydatetime(), max_value=df['timestamp'].max().to_pydatetime(), value=df['timestamp'].max().to_pydatetime())
+def display_prediction_results(predictions, timestamps):
+    """Fungsi terpisah untuk menampilkan semua hasil prediksi."""
+    col1, col2 = st.columns([1, 2])
+    with col1:
+        stress_count = np.sum(predictions)
+        non_stress_count = len(predictions) - stress_count
+        stress_percentage = (stress_count / len(predictions)) * 100 if len(predictions) > 0 else 0
+        st.metric(label="Total Jendela Waktu", value=f"{len(predictions)}")
+        st.metric(label="Terdeteksi Stres", value=f"{stress_count} ({stress_percentage:.1f}%)", delta_color="inverse")
+        if stress_percentage > 50: st.error("Tingkat stres terdeteksi tinggi.")
+        else: st.success("Tingkat stres tampak terkendali.")
 
-                df = df[(df['timestamp'] >= start_time) & (df['timestamp'] <= end_time)]
+    with col2:
+        df_pie = pd.DataFrame({'Status': ['Stres', 'Tidak Stres'], 'Jumlah': [stress_count, non_stress_count]})
+        pie_chart = alt.Chart(df_pie).mark_arc(innerRadius=50).encode(
+            theta=alt.Theta(field="Jumlah", type="quantitative"),
+            color=alt.Color(field="Status", type="nominal", scale=alt.Scale(domain=['Stres', 'Tidak Stres'], range=['#E74C3C', '#2ECC71']))
+        ).properties(title="Distribusi Hasil Prediksi")
+        st.altair_chart(pie_chart, use_container_width=True)
 
-            if selected_sensors:
-                df_chart = df[selected_sensors].reset_index().melt(id_vars='index')
-                chart = alt.Chart(df_chart).mark_line().encode(
-                    x='index:Q',
-                    y='value:Q',
-                    color='variable:N'
-                ).properties(width=700, height=400)
-                st.altair_chart(chart, use_container_width=True)
+    st.markdown("---")
+    st.markdown("#### 🕒 Garis Waktu Deteksi Stres")
+    results_df = pd.DataFrame({'timestamp_sec': timestamps, 'prediksi': predictions})
+    stress_events = results_df[results_df['prediksi'] == 1]
 
-        elif fitur == "🧠 Prediksi Stres":
-            st.markdown("### 🧠 Prediksi Stres")
-            if st.button("Prediksi Sekarang"):
-                expected_columns = [
-                    'acc_mean_x', 'acc_std_x', 'acc_min_x', 'acc_max_x',
-                    'acc_mean_y', 'acc_std_y', 'acc_min_y', 'acc_max_y',
-                    'acc_mean_z', 'acc_std_z', 'acc_min_z', 'acc_max_z',
-                    'acc_mean_mag', 'acc_std_mag',
-                    'bvp_mean_hr', 'bvp_rmssd', 'bvp_lf_hf_ratio', 'bvp_std_hr',
-                    'temp_mean', 'temp_std', 'temp_min', 'temp_max', 'temp_slope'
-                ]
-                if all(col in df.columns for col in expected_columns):
-                    scaler = StandardScaler()
-                    df_scaled = scaler.fit_transform(df[expected_columns])
-
-                    prediction = model.predict(df_scaled)
-                    df['prediction'] = (prediction > 0.5).astype(int)
-                    df['Hasil'] = df['prediction'].map({0: 'Tidak Stres', 1: 'Stres'})
-                    st.dataframe(df['Hasil'].value_counts().reset_index().rename(columns={'index': 'Kelas', 'Hasil': 'Jumlah'}))
-
-                    # Insight sederhana
-                    if df['Hasil'].value_counts().get('Stres', 0) > df['Hasil'].value_counts().get('Tidak Stres', 0):
-                        st.warning("⚠️ Mayoritas data menunjukkan kondisi stres. Perhatikan faktor lingkungan atau aktivitas.")
-                    else:
-                        st.success("✅ Sebagian besar data menunjukkan kondisi tidak stres. Tetap pertahankan gaya hidup sehat!")
-
-                    csv = df.to_csv(index=False).encode('utf-8')
-                    st.download_button("📥 Unduh Hasil Prediksi", data=csv, file_name='hasil_prediksi_stres.csv', mime='text/csv')
-                else:
-                    st.error("File CSV tidak memiliki semua kolom sensor yang dibutuhkan: " + ", ".join(expected_columns))
+    if not stress_events.empty:
+        st.write("Grafik di bawah ini menandai titik-titik waktu (dalam detik) di mana stres terdeteksi.")
+        timeline_chart = alt.Chart(stress_events).mark_tick(
+            color='red', thickness=2, size=20
+        ).encode(
+            x=alt.X('timestamp_sec', title='Garis Waktu (detik)'),
+            tooltip=[alt.Tooltip('timestamp_sec', title='Stres terdeteksi pada detik ke')]
+        ).properties(
+            title='Kejadian Stres Terdeteksi Selama Perekaman Data',
+            height=400
+            )
+        st.altair_chart(timeline_chart, use_container_width=True)
     else:
-        st.info("Silakan unggah file CSV sensor terlebih dahulu.")
+        st.success("Luar biasa! Tidak ada periode stres yang signifikan terdeteksi pada data Anda.")
 
-elif menu == "TENTANG":
-    st.title("ℹ️ Tentang")
-    st.write("Aplikasi ini dikembangkan untuk deteksi stres berbasis data sensor wearable.")
+def display_signal_visualization(df_raw):
+    """Fungsi terpisah untuk menampilkan visualisasi sinyal."""
+    st.markdown("#### Visualisasi Sinyal Sensor Mentah")
+    available_cols = df_raw.select_dtypes(include=np.number).columns.tolist()
+    selected_sensors = st.multiselect(
+        "Pilih sinyal untuk divisualisasikan:", 
+        available_cols, 
+        default=available_cols[:3] if len(available_cols) >= 3 else available_cols
+    )
+    if selected_sensors:
+        charts = []
+        for col in selected_sensors:
+            df_plot = df_raw[[col]].dropna().reset_index()
+            chart = alt.Chart(df_plot).mark_line().encode(
+                x=alt.X('index', title='Sampel'),
+                y=alt.Y(col, title='Amplitudo'),
+                tooltip=[col]
+            ).properties(title=f'Sinyal {col}', width='container', height=200)
+            charts.append(chart)
+        st.altair_chart(alt.vconcat(*charts), use_container_width=True)
 
-elif menu == "KONTAK":
+def display_tentang():
+    """Menampilkan konten halaman Tentang."""
+    st.title("ℹ️ Tentang Rilexin")
+    st.info("""
+    Aplikasi ini adalah prototipe yang dikembangkan untuk mendeteksi stres menggunakan data dari sensor wearable. 
+    Dengan memanfaatkan machine learning, Rilexin bertujuan untuk memberikan insight awal mengenai kondisi fisiologis pengguna 
+    yang berkaitan dengan stres.
+    """)
+
+def display_kontak():
+    """Menampilkan konten halaman Kontak."""
     st.title("📞 Kontak")
-    st.write("Hubungi kami di mc299d5y2471@student.devacademy.id dan mc262d5y2274@student.devacademy.id.")
+    st.write("Untuk pertanyaan atau masukan, silakan hubungi tim kami melalui email:")
+    st.code("mc299d5y2471@student.devacademy.id")
+    st.code("mc262d5y2274@student.devacademy.id")
+
+
+# ===================================================================
+# NAVIGASI UTAMA APLIKASI
+# ===================================================================
+
+st.sidebar.title("Navigasi")
+menu = st.sidebar.radio(
+    "Pilih Halaman:",
+    ["BERANDA", "UPLOAD & PREDIKSI", "TENTANG", "KONTAK"],
+    label_visibility="collapsed"
+)
+
+# Menampilkan halaman sesuai pilihan menu
+if menu == "BERANDA":
+    display_beranda()
+elif menu == "UPLOAD & PREDIKSI":
+    display_upload_prediksi()
+elif menu == "TENTANG":
+    display_tentang()
+elif menu == "KONTAK":
+    display_kontak()
