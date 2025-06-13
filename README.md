@@ -15,4 +15,4 @@ Dataset: [WESAD](https://www.kaggle.com/datasets/orvile/wesad-wearable-stress-af
 Pengerjaan dilakukan menggunakan platform kaggle:
 - Data analysis ([kaggle](https://www.kaggle.com/code/furqonalhaqqi/coding-camp-capstone-data-analysis))
 - Training Model ([Kaggle](https://www.kaggle.com/code/furqonalhaqqi/coding-camp-capstone-training-model))
-"# Coding_Camp_Capstone" 
+- Application ([Streamlit](https://codingcampcapstone-miso3xszrjgxaegtdvqize.streamlit.app/)
