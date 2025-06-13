@@ -89,4 +89,4 @@ Pengerjaan dilakukan menggunakan platform kaggle:
 - Training Model ([Kaggle](https://www.kaggle.com/code/furqonalhaqqi/coding-camp-capstone-training-model))
 
 Aplikasi Deploy
-- Application ([Streamlit](https://codingcampcapstone-miso3xszrjgxaegtdvqize.streamlit.app/))
+- Application ([Streamlit](https://codingcampcapstone-rnomz8mnv4bezwjfaxwref.streamlit.app/))
